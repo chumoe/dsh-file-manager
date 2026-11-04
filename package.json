@@ -15,12 +15,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/dsh-file-manager.git"
+    "url": "git+https://github.com/chumoe/dsh-file-manager.git"
   },
   "bugs": {
-    "url": "https://github.com/OWNER/dsh-file-manager/issues"
+    "url": "https://github.com/chumoe/dsh-file-manager/issues"
   },
-  "homepage": "https://github.com/OWNER/dsh-file-manager#readme",
+  "homepage": "https://github.com/chumoe/dsh-file-manager#readme",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",

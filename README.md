@@ -66,7 +66,7 @@ plugin_manager  action: install_bundle  target: /absolute/path/to/dsh-file-manag
 **From GitHub** — clone first, then add the directory; the bundle is not published to a registry, so the archive path is the install path:
 
 ```
-git clone https://github.com/OWNER/dsh-file-manager.git
+git clone https://github.com/chumoe/dsh-file-manager.git
 dsh plugin add "$PWD/dsh-file-manager"
 ```
 
