@@ -51,30 +51,34 @@ The shipped `@deepseek-ai/dsh-client-ui-sidebar-files` tab is listing-only. This
 
 Requires DSH `>= 0.2.1-rc.5` and Node `>= 22`.
 
-**From a local directory** (a checkout or an unpacked release):
+**From a local directory** (a checkout or an unpacked release). `--profile` is required and must come before `add`:
 
 ```
-dsh plugin add /absolute/path/to/dsh-file-manager
+dsh plugin --profile web add /absolute/path/to/dsh-file-manager
 ```
 
-or through the plugin manager tool:
+Or through the plugin manager tool, which does the same thing and also records the bundle in the profile:
 
 ```
 plugin_manager  action: install_bundle  target: /absolute/path/to/dsh-file-manager
 ```
 
-**From GitHub** — clone first, then add the directory; the bundle is not published to a registry, so the archive path is the install path:
+**From GitHub** — clone first, then add the checkout; the bundle is not published to a registry, so the clone path is the install path:
 
 ```
 git clone https://github.com/chumoe/dsh-file-manager.git
-dsh plugin add "$PWD/dsh-file-manager"
+dsh plugin --profile web add "$PWD/dsh-file-manager"
 ```
+
+Both forms add the dependency **and** register the bundle in the profile (`dsh.profile.bundles`), so a restart is all that is left. `dsh plugin` without `--profile` is an error, and the profile has to be the one you actually serve — `web` for the browser UI.
 
 Restart the Web UI (or let HMR pick it up) and open the right sidebar → **Workspace Files**. Remove or disable `dsh-file-manager` in the plugin list to restore the shipped tab.
 
 ## Configuration
 
-None. There are no settings: the panel inherits the session's workspace directory from the Host.
+None. There are no settings to configure.
+
+The panel opens on the session's workspace directory and can be pointed at any other directory from the toolbar's **More actions → Jump to** menu, which lists the session workspaces, the home directory, Desktop / Downloads / Documents when they exist, and the usual volume roots such as `/tmp` and `/`.
 
 Server-side limits:
 
