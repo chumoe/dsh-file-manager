@@ -18,13 +18,15 @@ The shipped `@deepseek-ai/dsh-client-ui-sidebar-files` tab is listing-only. This
 **Navigation**
 - One directory at a time: the list always shows the children of the current folder, so the breadcrumb and the rows can never disagree.
 - Double-click, `Enter`, the chevron or a breadcrumb enters a folder; `ArrowLeft` climbs to the parent; a single click only selects and never swaps the listing under the pointer.
-- Multi-select with `Ctrl`/`Cmd` and `Shift`.
+- Multi-select with `Ctrl`/`Cmd` and `Shift`; the action bar appears **below the list**, so selecting a row never shifts the rows out from under the pointer mid-double-click.
 - Search (the magnifier) is the one mode that spans folders: it filters across every directory already loaded, keeps each hit's ancestors visible, and renders hits as an indented tree. Rows expose `treeitem` / `aria-level` / `data-fm-path`.
 - Directories sort first, then naturally and case-insensitively.
 - A **jump menu** in the toolbar switches the panel to another root: the session workspaces, the home directory, Desktop / Downloads / Documents, `/tmp` and `/`. Any absolute path works, so the panel is not trapped inside one workspace.
 
 **Preview and edit**
 - Images, PDF, video, audio and text preview inline; other binaries fall back to metadata plus a download button.
+- **Markdown renders as a document.** `.md`/`.markdown`/`.mdx` files open through the host's own renderer — the same component the chat transcript uses — so headings, lists, tables, task lists, block quotes and highlighted code fences look identical to a message. A toolbar toggle switches any single file back to highlighted source; non-Markdown text keeps the source view. Relative image links resolve against the file's own directory, and a document above 200 KB stays in the source view rather than freezing the panel.
+- **HTML renders in a sandboxed frame.** `.html`/`.htm` files open in a frame with `sandbox=""`: styles and images display, while scripts, forms and navigation are denied by the browser itself. Relative `src`/`href`/`poster` references are rewritten to the authenticated download route against the file's own directory; root-absolute paths are left alone. The same toggle flips back to highlighted source, and files above 200 KB stay in source view.
 - Line numbers in the gutter, which stays visible while the text scrolls.
 - Syntax highlighting in both preview and editor with **no third-party dependency**: a built-in tokenizer covers C-like languages (JS/TS/JSX/Java/C/C++/Go/Rust/PHP…), Python/Ruby/Shell/Lua, YAML/TOML/INI, SQL, CSS/SCSS/Less, JSON and HTML/XML/Vue/Svelte, plus Markdown. Colours are theme aliases and follow light/dark. Files above 80 KB fall back to plain text so a huge file never stalls the panel.
 - Inline editing over the highlighted layer (transparent textarea, synced scroll). `Ctrl+S` saves, `Tab` inserts two spaces, an external change raises a conflict prompt instead of silently overwriting, and files above the 2 MB text cap open read-only.

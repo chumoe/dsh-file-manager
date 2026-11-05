@@ -14,6 +14,27 @@ window.__ModuleLoader__.load({
 		const h = React.createElement;
 		const { useState, useRef, useEffect, useMemo, useCallback } = React;
 
+		/* The host's own Markdown renderer — the identical component the chat
+		 * transcript and the shipped document preview use. It is a *host*
+		 * dependency, so it is optional here: a host that does not export it
+		 * (older build, or a stubbed loader in tests) must degrade to the
+		 * syntax-highlighted source view rather than blank the panel.
+		 *
+		 * The export is wrapped in `React.memo`, so it is an object with a
+		 * `$$typeof` tag rather than a plain function — testing for `function`
+		 * would silently discard the very component we came for. Accept any
+		 * renderable component type: a function, or a memo/forwardRef object. */
+		let MarkdownText = null;
+		try {
+			const primitives = require('@deepseek-ai/dsh-client-ui-primitives');
+			const candidate = primitives ? primitives.MarkdownText : null;
+			const renderable = typeof candidate === 'function'
+				|| (typeof candidate === 'object' && candidate !== null && typeof candidate.$$typeof === 'symbol');
+			if (renderable) MarkdownText = candidate;
+		} catch (error) {
+			MarkdownText = null;
+		}
+
 		/** Keyed seat this panel shadows; the shipped definition keeps the tab type. */
 		const FILES_ID = '@deepseek-ai/dsh-client-ui-sidebar-files';
 		const NS = 'fileManager';
@@ -69,6 +90,9 @@ window.__ModuleLoader__.load({
 			search: makeIcon([C(7.1, 7.1, 4.1), P('M10.2 10.2L13.6 13.6')]),
 			chat: makeIcon([P('M2.4 4.6c0-.9.7-1.6 1.6-1.6h8c.9 0 1.6.7 1.6 1.6v4.6c0 .9-.7 1.6-1.6 1.6H7.6l-3.1 2.6v-2.6h-.5c-.9 0-1.6-.7-1.6-1.6z')]),
 			file: makeIcon([P('M4.1 2.4h4.9l2.9 2.9v8.3H4.1z'), P('M8.9 2.4v2.9h2.9')]),
+			/* "M↓" — the Markdown mark, used for the rendered/source toggle so it
+			 * reads as a format switch rather than as the generic file glyph. */
+			markdown: makeIcon([P('M2.2 4.4h11.6v7.2H2.2z'), P('M4.3 10V6l1.7 2 1.7-2v4')]),
 			all: makeIcon([P('M3.4 4.5h9.2M3.4 8h9.2M3.4 11.5h9.2')])
 		};
 
@@ -226,11 +250,42 @@ window.__ModuleLoader__.load({
 			'gitignore', 'editorconfig', 'lock', 'log', 'csv', 'tsv'
 		]);
 
+		/** Files the previewer renders as formatted Markdown instead of source. */
+		const MARKDOWN_EXT = new Set(['md', 'markdown', 'mdown', 'mkd', 'mdx']);
+		/** Files the previewer renders in a script-disabled sandboxed frame. */
+		const HTML_EXT = new Set(['html', 'htm']);
+
+		/* The Markdown parser and the HTML rewriter are far heavier than the
+		 * tokenizer that drives the source view, and the previewer happily reads
+		 * up to 512 KB. Past this size a document stays in the source view — the
+		 * toggle is withheld rather than offered and then hanging the UI. */
+		const RENDER_LIMIT = 200000;
+
 		function gutterText(text) {
 			const count = text === '' ? 1 : text.split('\n').length;
 			let out = '1';
 			for (let n = 2; n <= count; n += 1) out += '\n' + n;
 			return out;
+		}
+
+		/* A relative image reference inside a Markdown file is resolved against
+		 * that file's own directory, exactly like a static site generator would.
+		 * Absolute URLs and data/blob URIs are left for the browser to handle. */
+		function resolveRelativeAsset(rel, value) {
+			const target = typeof value === 'string' ? value.trim() : '';
+			if (target === '' || target.startsWith('/')) return undefined;
+			if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('//') || target.startsWith('#')) return undefined;
+			const dir = parentRel(rel);
+			const parts = (dir === '' ? target : `${dir}/${target}`).split('/');
+			const stack = [];
+			for (const part of parts) {
+				if (part === '' || part === '.') continue;
+				if (part === '..') {
+					if (stack.length === 0) return undefined;
+					stack.pop();
+				} else stack.push(part);
+			}
+			return stack.length === 0 ? undefined : stack.join('/');
 		}
 
 		function sizeLabel(bytes) {
@@ -507,7 +562,15 @@ window.__ModuleLoader__.load({
 			'err.archive-failed': '压缩或解压失败',
 			'err.io': '读写失败',
 			attachedTitle: '对话中：',
-			detachHint: '从对话中移除 {name}'
+			detachHint: '从对话中移除 {name}',
+			mdRendered: '渲染',
+			mdRaw: '源码',
+			codeCopy: '复制',
+			codeCopied: '已复制',
+			codeLabel: '代码块',
+			codeWrap: '自动换行',
+			codeUnwrap: '取消换行',
+			footnotesLabel: '脚注'
 		};
 
 		const en = {
@@ -639,7 +702,15 @@ window.__ModuleLoader__.load({
 			'err.archive-failed': 'Compression failed',
 			'err.io': 'Read or write failed',
 			attachedTitle: 'In chat:',
-			detachHint: 'Remove {name} from the chat'
+			detachHint: 'Remove {name} from the chat',
+			mdRendered: 'Rendered',
+			mdRaw: 'Source',
+			codeCopy: 'Copy',
+			codeCopied: 'Copied',
+			codeLabel: 'Code block',
+			codeWrap: 'Wrap lines',
+			codeUnwrap: 'Unwrap lines',
+			footnotesLabel: 'Footnotes'
 		};
 
 		/* --------------------------------------------------------------- css */
@@ -662,7 +733,8 @@ window.__ModuleLoader__.load({
 .fm-tool svg{width:15px;height:15px}
 .fm-tool:hover:not(:disabled){color:var(--dsw-alias-label-primary);background:var(--dsw-alias-interactive-bg-hover)}
 .fm-tool:disabled{opacity:.35;cursor:default}
-.fm-selbar{display:flex;align-items:center;gap:1px;padding:2px 5px 2px 10px;border-bottom:.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);flex:none}
+/* Sits below the scroll box, so its border faces the list it summarises. */
+.fm-selbar{display:flex;align-items:center;gap:1px;padding:2px 5px 2px 10px;border-top:.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-layer-1);flex:none}
 .fm-seltext{flex:1;min-width:0;color:var(--dsw-alias-label-secondary);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fm-body{flex:1;min-height:0;overflow:auto;padding:5px 4px 10px;scrollbar-gutter:stable;outline:none}
 .fm-row{display:flex;align-items:center;gap:5px;height:26px;padding:0 8px 0 2px;border-radius:5px;cursor:default;user-select:none;white-space:nowrap;box-sizing:border-box}
@@ -742,8 +814,22 @@ body[data-ds-dark-theme] .fm-tk-str{color:var(--dsw-static-green-400)}
 body[data-ds-dark-theme] .fm-tk-num,body[data-ds-dark-theme] .fm-tk-attr,body[data-ds-dark-theme] .fm-tk-ann{color:var(--dsw-static-amber-400)}
 body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:var(--dsw-static-deepseek-300)}
 .fm-previewbody{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:auto;background:var(--dsw-alias-bg-layer-1)}
+/* Markdown fills the pane and scrolls as a document, unlike an image which is
+ * centred and capped. The inner body is the host renderer's own wrapper, so
+ * only spacing and a readable measure are set here — type, headings, tables
+ * and code fences keep the chat's tokens so both surfaces stay identical. */
+.fm-mdscroll{flex:1;align-self:stretch;min-height:0;width:100%;height:100%;overflow:auto;background:var(--dsw-alias-bg-layer-1)}
+.fm-mdbody{max-width:var(--dsh-chat-content-width,748px);margin:0 auto;padding:16px 20px 48px;box-sizing:border-box;font-size:var(--dsh-content-font-size-secondary,13px)}
+.fm-mdbody>:first-child{margin-top:0}
+.fm-mdbody>:last-child{margin-bottom:0}
+.fm-mdbody :where(pre){overflow:auto;max-width:100%}
+.fm-mdbody :where(table){max-width:100%;display:block;overflow-x:auto}
+.fm-mdbody :where(img){max-width:100%;height:auto}
 .fm-previewbody img{max-width:100%;max-height:100%;object-fit:contain;display:block}
 .fm-previewbody iframe{width:100%;height:100%;border:0;background:var(--dsw-alias-bg-base)}
+/* The HTML preview fills the pane like the PDF frame: full-bleed, own scroll.
+ * Unlike an image it is never centred or capped — a document is a document. */
+.fm-htmlframe{flex:1;align-self:stretch;min-height:0;width:100%;height:100%;border:0;background:var(--dsw-alias-bg-base)}
 .fm-previewbody video,.fm-previewbody audio{max-width:calc(100% - 24px);max-height:100%}
 .fm-info{display:flex;flex-direction:column;align-items:center;gap:8px;padding:24px;color:var(--dsw-alias-label-secondary);text-align:center;font-size:12px;line-height:1.6}
 .fm-info svg{width:30px;height:30px;color:var(--dsw-alias-label-tertiary)}
@@ -1260,6 +1346,55 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 					})));
 		}
 
+		/* Markdown preview through the host's own renderer.
+		 *
+		 * The renderer owns the whole document: it emits headings, lists, tables,
+		 * task lists and highlighted fences with the same chrome the chat uses, so
+		 * a README here looks like a README there. Code-fence labels are passed in
+		 * because the renderer has no locale seat of its own to borrow — it is a
+		 * primitive, not a plugin. `resolveAsset` comes from the panel because only
+		 * it knows the workspace root a relative image has to be served from. */
+		function MarkdownPreview({ rel, text, labels, resolveAsset, onMouseUp }) {
+			const pathImages = useMemo(() => ({
+				resolve: (value) => {
+					const target = resolveRelativeAsset(rel, value);
+					return target === undefined ? undefined : resolveAsset(target);
+				}
+			}), [rel, resolveAsset]);
+			return h('div', { className: 'fm-mdscroll', onMouseUp },
+				h('div', { className: 'fm-mdbody', 'data-fm-markdown': rel },
+					h(MarkdownText, { text, labels, pathImages, omitHtml: true })));
+		}
+
+		/* Rewrite relative `src` / `href` / `poster` values in an HTML document so
+		 * they point at the authenticated download route, resolved against the
+		 * document's own directory. Absolute URLs, fragments and `data:` URIs are
+		 * left untouched; anything that fails to resolve keeps its original value.
+		 * Attribute-style rewriting is deliberately shallow — `srcset`, inline
+		 * styles and `<style>` blocks are preview niceties, not a rendering
+		 * contract, and a full DOM pass needs a parser this plugin does not have. */
+		function rewriteHtmlAssets(rel, html, resolveAsset) {
+			return String(html).replace(/\s(src|href|poster)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi,
+				(match, attribute, doubleQuoted, singleQuoted) => {
+					const value = doubleQuoted !== undefined ? doubleQuoted : singleQuoted;
+					const target = resolveRelativeAsset(rel, value);
+					if (target === undefined) return match;
+					const url = resolveAsset(target);
+					if (url === undefined) return match;
+					return ` ${String(attribute).toLowerCase()}="${String(url).replace(/"/g, '&quot;')}"`;
+				});
+		}
+
+		/* HTML preview in a fully sandboxed frame: `sandbox=""` denies scripts,
+		 * forms, popups and navigation, so the document renders as static markup
+		 * only — the same trust level the PDF frame already gets. `srcdoc` keeps
+		 * the content out of any origin, which is why relative references have to
+		 * be rewritten above rather than resolved by the browser. */
+		function HtmlPreview({ rel, text, resolveAsset }) {
+			const srcDoc = useMemo(() => rewriteHtmlAssets(rel, text, resolveAsset), [rel, text, resolveAsset]);
+			return h('iframe', { className: 'fm-htmlframe', title: rel, sandbox: '', srcDoc, referrerPolicy: 'no-referrer' });
+		}
+
 		/* ------------------------------------------------------------- panel */
 
 		/* A selection elsewhere in the page (chat text, another panel) must not be
@@ -1312,6 +1447,28 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 			const [query, setQuery] = useState('');
 			const [searching, setSearching] = useState(false);
 			const [textMenu, setTextMenu] = useState(null);
+			/* Markdown and HTML previews open rendered; `rawView` is the per-file
+			 * escape hatch back to the highlighted source — what you want when you
+			 * are proof-reading syntax rather than reading the document. */
+			const [rawView, setRawView] = useState(false);
+
+			/* `MarkdownText` keys its parse cache on the identity of `labels` and
+			 * `pathImages`, so rebuilding either on every render would re-parse the
+			 * whole document on every keystroke elsewhere in the panel. Both are
+			 * therefore memoized on exactly what they depend on. */
+			const mdLabels = useMemo(() => ({
+				code: {
+					copyLabel: t('codeCopy'),
+					copiedLabel: t('codeCopied'),
+					toolbarLabels: {
+						codeLabel: t('codeLabel'),
+						wrapLabel: t('codeWrap'),
+						unwrapLabel: t('codeUnwrap')
+					}
+				},
+				footnotes: t('footnotesLabel')
+			}), [t]);
+			const mdResolveAsset = useCallback((target) => downloadUrl(root, target, true), [root]);
 
 			const bodyRef = useRef(null);
 			const uploadRef = useRef(null);
@@ -1617,6 +1774,7 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 
 			const openPreview = useCallback(async (rel) => {
 				setEditor(null);
+				setRawView(false);
 				const name = baseName(rel);
 				const ext = extOf(name);
 				const base = { rel, name, ext, loading: true };
@@ -2538,6 +2696,16 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 			}
 
 			function renderPreview() {
+				const isMarkdown = preview.kind === 'text' && MARKDOWN_EXT.has(preview.ext);
+				const isHtml = preview.kind === 'text' && HTML_EXT.has(preview.ext);
+				/* `oversized` keeps the toggle off screen entirely: a button that
+				 * exists but cannot be honoured is worse than no button. */
+				const oversized = typeof preview.text === 'string' && preview.text.length > RENDER_LIMIT;
+				const canRenderMarkdown = isMarkdown && MarkdownText !== null && !oversized;
+				const canRenderHtml = isHtml && !oversized;
+				/* Both formats open rendered and fall back to one shared source
+				 * view; `rawView` only ever means "show me the text itself". */
+				const showRendered = (canRenderMarkdown || canRenderHtml) && rawView !== true;
 				const body = preview.loading
 					? h('div', { className: 'fm-info' }, h('div', { className: 'fm-spinner' }), h('div', null, t('loading')))
 					: preview.kind === 'image'
@@ -2550,9 +2718,23 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 									? h('audio', { src: preview.url, controls: true, preload: 'metadata' })
 									: preview.kind === 'text'
 										? preview.text
-											? h('div', { className: 'fm-codescroll' },
-												h('pre', { className: 'fm-gutter', 'aria-hidden': 'true' }, gutterText(preview.text)),
-												h(HighlightedPre, { className: 'fm-pre', text: preview.text, lang: langOf(preview.rel), onMouseUp: selectWordInPreview }))
+											? isHtml && showRendered
+												? h(HtmlPreview, {
+													rel: preview.rel,
+													text: preview.text,
+													resolveAsset: mdResolveAsset
+												})
+												: showRendered
+													? h(MarkdownPreview, {
+														rel: preview.rel,
+														text: preview.text,
+														labels: mdLabels,
+														resolveAsset: mdResolveAsset,
+														onMouseUp: selectWordInPreview
+													})
+													: h('div', { className: 'fm-codescroll' },
+														h('pre', { className: 'fm-gutter', 'aria-hidden': 'true' }, gutterText(preview.text)),
+														h(HighlightedPre, { className: 'fm-pre', text: preview.text, lang: langOf(preview.rel), onMouseUp: selectWordInPreview }))
 											: h('pre', { className: 'fm-pre' }, t('empty'))
 										: h('div', { className: 'fm-info' },
 											h(I.info, {}),
@@ -2560,9 +2742,21 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 											h('div', null, sizeLabel(preview.size)));
 				const canEdit = preview.kind === 'text' && preview.truncated !== true;
 				const canExternal = preview.kind !== 'binary' && preview.kind !== 'text';
+				const canRender = canRenderMarkdown || canRenderHtml;
+				const rendered = rawView !== true;
+				const fmtToggle = canRender && preview.text
+					? h('button', {
+						type: 'button',
+						className: `fm-tool${rendered ? ' on' : ''}`,
+						title: rendered ? t('mdRaw') : t('mdRendered'),
+						'aria-pressed': rendered,
+						onClick: () => setRawView(!rawView)
+					}, h(I.markdown, {}))
+					: null;
 				return h('div', { className: 'fm-overlay' },
 					h('div', { className: 'fm-ovhead' },
 						h('span', { className: 'fm-ovtitle', title: preview.rel }, preview.name),
+						fmtToggle,
 						canEdit ? h('button', { type: 'button', className: 'fm-tool', title: t('edit'), onClick: () => openEditor(preview.rel) }, h(I.edit, {})) : null,
 						canExternal ? h('button', {
 							type: 'button',
@@ -2649,28 +2843,6 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 						}
 					}, h(I.more, {}))
 				),
-				selected.length > 0
-					? h('div', { className: 'fm-selbar' },
-						h('span', { className: 'fm-seltext' }, t('selectedCount', { count: selected.length })),
-						h('button', { type: 'button', className: 'fm-tool', title: t('copy'), onClick: () => {
-							setClipboard({ mode: 'copy', rels: selected });
-							notify(t('copied', { count: selected.length }));
-						} }, h(I.copy, {})),
-						h('button', { type: 'button', className: 'fm-tool', title: t('cut'), onClick: () => {
-							setClipboard({ mode: 'cut', rels: selected });
-							notify(t('cutDone', { count: selected.length }));
-						} }, h(I.cut, {})),
-						h('button', {
-							type: 'button',
-							className: 'fm-tool',
-							title: t('compressZip'),
-							onClick: () => doCompress(selected, 'zip')
-						}, h(I.archive, {})),
-						h('button', { type: 'button', className: 'fm-tool', title: t('addToChat'), onClick: () => addItemsToChat(selected) }, h(I.chat, {})),
-						h('button', { type: 'button', className: 'fm-tool', title: t('download'), onClick: () => doDownload(selected) }, h(I.download, {})),
-						h('button', { type: 'button', className: 'fm-tool', title: t('delete'), onClick: () => doDelete(selected) }, h(I.trash, {})),
-						h('button', { type: 'button', className: 'fm-tool', title: t('clearSelection'), onClick: () => setSelected([]) }, h(I.close, {})))
-					: null,
 				searching
 					? h('div', { className: 'fm-searchbar' },
 						h(I.search, { size: 13 }),
@@ -2755,6 +2927,34 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 					matched && visible.length === 0 ? h('div', { className: 'fm-note' }, t('noMatches')) : null,
 					tree[''] && tree[''].truncated ? h('div', { className: 'fm-note' }, t('truncated')) : null
 				),
+				/* The selection bar belongs *below* the list, never above it. Above,
+				 * the first click of a double click made it appear and pushed every
+				 * row down by its own height, so the second click landed on the row
+				 * that had moved into that slot — the open gesture silently missed.
+				 * Below the scroll box it only shortens the viewport from the bottom,
+				 * and rows keep the screen position they had when they were clicked. */
+				selected.length > 0
+					? h('div', { className: 'fm-selbar' },
+						h('span', { className: 'fm-seltext' }, t('selectedCount', { count: selected.length })),
+						h('button', { type: 'button', className: 'fm-tool', title: t('copy'), onClick: () => {
+							setClipboard({ mode: 'copy', rels: selected });
+							notify(t('copied', { count: selected.length }));
+						} }, h(I.copy, {})),
+						h('button', { type: 'button', className: 'fm-tool', title: t('cut'), onClick: () => {
+							setClipboard({ mode: 'cut', rels: selected });
+							notify(t('cutDone', { count: selected.length }));
+						} }, h(I.cut, {})),
+						h('button', {
+							type: 'button',
+							className: 'fm-tool',
+							title: t('compressZip'),
+							onClick: () => doCompress(selected, 'zip')
+						}, h(I.archive, {})),
+						h('button', { type: 'button', className: 'fm-tool', title: t('addToChat'), onClick: () => addItemsToChat(selected) }, h(I.chat, {})),
+						h('button', { type: 'button', className: 'fm-tool', title: t('download'), onClick: () => doDownload(selected) }, h(I.download, {})),
+						h('button', { type: 'button', className: 'fm-tool', title: t('delete'), onClick: () => doDelete(selected) }, h(I.trash, {})),
+						h('button', { type: 'button', className: 'fm-tool', title: t('clearSelection'), onClick: () => setSelected([]) }, h(I.close, {})))
+					: null,
 				attachedChips.length > 0 ? h('div', { className: 'fm-chips' },
 					h('span', { className: 'fm-chipshead' }, t('attachedTitle')),
 					attachedChips.map((item) => h('button', {
