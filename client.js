@@ -703,7 +703,15 @@ window.__ModuleLoader__.load({
 .fm-editor{flex:1;min-height:0;width:100%;box-sizing:border-box;border:0;outline:none;resize:none;padding:10px 12px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.6;tab-size:2;white-space:pre;overflow:auto}
 .fm-gutter{margin:0;padding:10px 8px 10px 10px;text-align:right;color:var(--dsw-alias-label-tertiary);background:var(--dsw-alias-bg-layer-1);border-right:1px solid var(--dsw-alias-border-l1);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.6;white-space:pre;overflow:hidden;user-select:none;flex:none}
 .fm-codescroll{flex:1;min-height:0;width:100%;height:100%;display:flex;overflow:auto;background:var(--dsw-alias-bg-layer-1)}
-.fm-codescroll>.fm-gutter{position:sticky;left:0;z-index:1}
+/* The preview gutter shares the scroll box as a flex row. Without align-self
+ * the flex default (stretch) pins it to the port height — 799px — while the
+ * text beside it is 6040px tall, and overflow:hidden then clips every number
+ * past the first screen: 301 lines showed only 38 numbers. flex-start lets the
+ * gutter take its natural full height so every number exists, and vertical
+ * scrolling then carries it along with the text; left keeps it pinned when the
+ * text scrolls sideways. Keep this comment free of backticks — it lives inside
+ * a template literal. */
+.fm-codescroll>.fm-gutter{position:sticky;left:0;z-index:1;align-self:flex-start;overflow:visible}
 .fm-pre{flex:1;min-height:0;margin:0;overflow:visible;padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.6;white-space:pre;tab-size:2;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);user-select:text;-webkit-user-select:text;cursor:text}
 .fm-editbody{position:relative;flex:1;min-height:0;min-width:0;overflow:hidden;background:var(--dsw-alias-bg-layer-1)}
 .fm-hl{position:absolute;inset:0;margin:0;padding:10px 12px;overflow:hidden;pointer-events:none;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.6;tab-size:2;white-space:pre;background:transparent;color:var(--dsw-alias-label-primary);z-index:0}
@@ -2597,6 +2605,19 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 						})
 					),
 					h('button', { type: 'button', className: 'fm-tool', title: t('newFile'), onClick: () => newFile(folderTarget) }, h(I.plus, {})),
+					/* Paste belongs in the toolbar, not only in the row menu: an empty
+					 * directory renders no rows at all, so a row context menu is
+					 * unreachable exactly when paste is the only thing worth doing.
+					 * The button stays in place and greys out instead of vanishing,
+					 * because a toolbar whose buttons move is worse than one that
+					 * says "nothing to paste" — same reason native file managers do it. */
+					h('button', {
+						type: 'button',
+						className: 'fm-tool',
+						title: t('paste'),
+						disabled: !(clipboard && clipboard.rels.length),
+						onClick: () => doPaste(folderTarget)
+					}, h(I.paste, {})),
 					h('button', { type: 'button', className: 'fm-tool', title: t('upload'), onClick: () => {
 						uploadDirRef.current = folderTarget;
 						if (uploadRef.current) uploadRef.current.click();

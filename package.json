@@ -1,6 +1,6 @@
 {
   "name": "dsh-file-manager",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Full workspace file manager for the DSH right Sidebar: browse, preview, edit, create, rename, copy, move, delete, compress, extract, upload, download, and add files to the chat with real reference chips.",
   "type": "module",
   "license": "MIT",
@@ -34,6 +34,7 @@
     "locale/*.json",
     "icon.svg",
     "README.md",
+    "README.zh.md",
     "LICENSE"
   ],
   "engines": {
