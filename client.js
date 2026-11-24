@@ -76,6 +76,8 @@ window.__ModuleLoader__.load({
 			]),
 			close: makeIcon([P('M4 4l8 8M12 4l-8 8')]),
 			save: makeIcon([R(2.6, 2.6, 10.8, 10.8, 1.4), P('M5.2 2.6v3.6h5.2V2.6'), R(5, 8.9, 6, 4.5, 0.6)]),
+			undo: makeIcon([P('M5.4 5.2L2.6 8l2.8 2.8'), P('M2.8 8h6.4a3.6 3.6 0 0 1 0 7.2H7.2')]),
+			redo: makeIcon([P('M10.6 5.2L13.4 8l-2.8 2.8'), P('M13.2 8H6.8a3.6 3.6 0 0 0 0 7.2h2')]),
 			download: makeIcon([P('M8 3.2v8M4.6 7.8L8 11.2l3.4-3.4'), P('M2.6 13.2h10.8')]),
 			trash: makeIcon([P('M2.8 4.4h10.4M6 4.4V2.9h4v1.5M4.3 4.4l.7 9.1h6l.7-9.1')]),
 			edit: makeIcon([P('M11.2 2.6l2.2 2.2-8 8-2.9.7.7-2.9z')]),
@@ -480,6 +482,8 @@ window.__ModuleLoader__.load({
 			openInPanel: '在预览面板打开',
 			openFolder: '打开',
 			save: '保存',
+			undo: '撤销',
+			redo: '重做',
 			close: '关闭',
 			saved: '已保存',
 			saving: '保存中…',
@@ -620,6 +624,8 @@ window.__ModuleLoader__.load({
 			openInPanel: 'Open in preview panel',
 			openFolder: 'Open',
 			save: 'Save',
+			undo: 'Undo',
+			redo: 'Redo',
 			close: 'Close',
 			saved: 'Saved',
 			saving: 'Saving…',
@@ -833,7 +839,7 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 .fm-previewbody video,.fm-previewbody audio{max-width:calc(100% - 24px);max-height:100%}
 .fm-info{display:flex;flex-direction:column;align-items:center;gap:8px;padding:24px;color:var(--dsw-alias-label-secondary);text-align:center;font-size:12px;line-height:1.6}
 .fm-info svg{width:30px;height:30px;color:var(--dsw-alias-label-tertiary)}
-.fm-menu{position:fixed;z-index:50;min-width:200px;max-height:70vh;overflow:auto;padding:4px;border-radius:8px;border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.fm-menu{position:fixed;z-index:50;min-width:200px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow-y:auto;overscroll-behavior:contain;padding:4px;border-radius:8px;border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);box-shadow:0 8px 24px rgba(0,0,0,.18)}
 .fm-mi{display:flex;align-items:center;gap:8px;width:100%;border:0;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;padding:6px 8px;border-radius:5px;cursor:default;text-align:left;white-space:nowrap}
 .fm-mi:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
 .fm-mi.danger{color:var(--dsw-alias-state-error-primary)}
@@ -913,6 +919,8 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 		}
 
 		function Menu({ menu, items, onClose }) {
+			const menuRef = useRef(null);
+			const [pos, setPos] = useState(null);
 			useEffect(() => {
 				const close = () => onClose();
 				const onKey = (event) => {
@@ -928,14 +936,37 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 					window.removeEventListener('blur', onBlur);
 				};
 			}, [onClose]);
+			/* Position from the menu's real measured size, not a guessed item count.
+			 * The CSS caps height and scrolls overflow, so without this a menu opened
+			 * near the bottom of the window runs past the viewport and its last rows
+			 * become unreachable. Re-measure whenever the item set changes. */
+			useEffect(() => {
+				const el = menuRef.current;
+				if (!el) return;
+				const vw = window.innerWidth || 1200;
+				const vh = window.innerHeight || 800;
+				const gap = 8;
+				const rect = el.getBoundingClientRect();
+				const w = rect.width || 214;
+				const hgt = rect.height || 0;
+				let left = menu.x;
+				let top = menu.y;
+				if (left + w > vw - gap) left = Math.max(gap, vw - w - gap);
+				if (top + hgt > vh - gap) top = Math.max(gap, Math.min(top, vh - hgt - gap));
+				setPos({
+					left: Math.max(gap, Math.min(left, vw - w - gap)),
+					top: Math.max(gap, Math.min(top, vh - hgt - gap))
+				});
+			}, [menu.x, menu.y, items.length]);
 			const estimated = Math.min(items.length * 30 + 16, 380);
-			const style = {
+			const style = pos || {
 				left: Math.max(6, Math.min(menu.x, (window.innerWidth || 1200) - 214)),
 				top: Math.max(6, Math.min(menu.y, (window.innerHeight || 800) - estimated - 8))
 			};
 			return h('div', {
 				className: 'fm-menu',
 				role: 'menu',
+				ref: menuRef,
 				style,
 				onMouseDown: (event) => event.stopPropagation()
 			}, items.map((item, index) => {
@@ -1430,6 +1461,10 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 			const cwd = useSessions((sessions) => sessions.byId[sessionId] && sessions.byId[sessionId].cwd);
 
 			const [root, setRoot] = useState(cwd);
+			/* Latest committed root, read after an await. A pending op() from a
+			 * previous root must never write its result into the current view. */
+			const rootRef = useRef(root);
+			rootRef.current = root;
 			const [tree, setTree] = useState({});
 			const [selected, setSelected] = useState([]);
 			const [anchor, setAnchor] = useState(null);
@@ -1522,17 +1557,20 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 
 			const loadDir = useCallback(async (rel) => {
 				if (root === undefined) return;
+				const requestedRoot = root;
 				setTree((previous) => {
 					const current = previous[rel];
 					return { ...previous, [rel]: { ...(current || {}), status: 'loading' } };
 				});
 				try {
-					const value = await op('list', { root, rel });
+					const value = await op('list', { root: requestedRoot, rel });
+					if (rootRef.current !== requestedRoot) return;
 					setTree((previous) => ({
 						...previous,
 						[rel]: { status: 'ready', entries: value.entries, truncated: value.truncated }
 					}));
 				} catch (error) {
+					if (rootRef.current !== requestedRoot) return;
 					setTree((previous) => ({
 						...previous,
 						[rel]: { status: 'error', error: error.message }
@@ -1748,10 +1786,12 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 			}, [askName, t, root, loadDir, notify]);
 
 			const openEditor = useCallback(async (rel) => {
+				const requestedRoot = root;
 				setPreview(null);
 				setEditor({ rel, name: baseName(rel), loading: true, text: '', savedText: '', dirty: false, binary: false, truncated: false, saving: false });
 				try {
-					const value = await op('read', { root, rel });
+					const value = await op('read', { root: requestedRoot, rel });
+					if (rootRef.current !== requestedRoot) return;
 					setEditor({
 						rel,
 						name: baseName(rel),
@@ -1765,6 +1805,7 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 						saving: false
 					});
 				} catch (error) {
+					if (rootRef.current !== requestedRoot) return;
 					setEditor(null);
 					notify(describeError(error, t), 'error');
 				}
@@ -1773,6 +1814,7 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 			openEditorRef.current = openEditor;
 
 			const openPreview = useCallback(async (rel) => {
+				const requestedRoot = root;
 				setEditor(null);
 				setRawView(false);
 				const name = baseName(rel);
@@ -1797,7 +1839,8 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 				if (TEXT_EXT.has(ext) || ext === '') {
 					setPreview({ ...base, loading: true, kind: 'text' });
 					try {
-						const value = await op('read', { root, rel, maxBytes: 512 * 1024 });
+						const value = await op('read', { root: requestedRoot, rel, maxBytes: 512 * 1024 });
+						if (rootRef.current !== requestedRoot) return;
 						setPreview({
 							...base,
 							loading: false,
@@ -1807,6 +1850,7 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 							size: value.size
 						});
 					} catch (error) {
+						if (rootRef.current !== requestedRoot) return;
 						setPreview(null);
 						notify(describeError(error, t), 'error');
 					}
@@ -1818,10 +1862,11 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 			const saveEditor = useCallback(async (force) => {
 				if (!editor || editor.binary || editor.truncated) return;
 				const snapshot = editor;
+				const requestedRoot = root;
 				setEditor((previous) => (previous ? { ...previous, saving: true } : previous));
 				try {
 					const value = await op('write', {
-						root,
+						root: requestedRoot,
 						rel: snapshot.rel,
 						content: snapshot.text,
 						baseMtimeMs: force ? undefined : snapshot.mtimeMs
@@ -1829,9 +1874,11 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 					setEditor((previous) => (previous && previous.rel === snapshot.rel
 						? { ...previous, saving: false, savedText: previous.text, mtimeMs: value.mtimeMs, size: value.size }
 						: previous));
+					if (rootRef.current !== requestedRoot) return;
 					notify(t('saved'));
 					loadDir(parentRel(snapshot.rel));
 				} catch (error) {
+					if (rootRef.current !== requestedRoot) return;
 					setEditor((previous) => (previous ? { ...previous, saving: false } : previous));
 					if (error.code === 'conflict') {
 						askConfirm(t('conflictTitle'), t('conflictMessage'), t('overwrite'), true, () => saveEditor(true));
@@ -2111,7 +2158,7 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 				try {
 					if (typeof inputActions.setDraft === 'function') {
 						inputActions.setDraft({ text, references });
-					} else if (inputActions.insertText(inserted, span) !== true) {
+					} else if (inputActions.insertText(body, span) !== true) {
 						notify(t('addToChatFailed', { message: t('composerBusy') }), 'error');
 						return;
 					}
@@ -2653,6 +2700,30 @@ body[data-ds-dark-theme] .fm-tk-fn,body[data-ds-dark-theme] .fm-tk-code{color:va
 							disabled: !dirty || editor.saving || editor.binary || editor.truncated || editor.loading,
 							onClick: () => saveEditor(false)
 						}, h(I.save, {})),
+						h('button', {
+							type: 'button',
+							className: 'fm-tool',
+							title: t('undo'),
+							disabled: editor.loading || editor.binary || editor.truncated,
+							onClick: () => {
+								const element = textElRef.current;
+								if (!element) return;
+								element.focus();
+								document.execCommand('undo');
+							}
+						}, h(I.undo, {})),
+						h('button', {
+							type: 'button',
+							className: 'fm-tool',
+							title: t('redo'),
+							disabled: editor.loading || editor.binary || editor.truncated,
+							onClick: () => {
+								const element = textElRef.current;
+								if (!element) return;
+								element.focus();
+								document.execCommand('redo');
+							}
+						}, h(I.redo, {})),
 						h('button', { type: 'button', className: 'fm-tool', title: t('download'), onClick: () => doDownload([editor.rel]) }, h(I.download, {})),
 						h('button', { type: 'button', className: 'fm-tool', title: t('close'), onClick: closeEditor }, h(I.close, {}))),
 					editor.loading
